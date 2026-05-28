@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { IdGenerator } from './id-generator';
 import { TracerPort, SpanPort, SpanOptions } from '../ports/tracer.port';
 import { contextManager } from './context-manager';
 import { Span, NoopSpan } from './span';
@@ -33,11 +33,11 @@ export class TracerService implements TracerPort {
         if (activeSpan) {
           traceId = activeSpan.traceId;
         } else {
-          traceId = randomUUID();
+          traceId = IdGenerator.traceId();
         }
       }
 
-      const spanId = randomUUID();
+      const spanId = IdGenerator.spanId();
       const span = new Span(name, traceId, spanId);
 
       // Apply initial attributes if provided

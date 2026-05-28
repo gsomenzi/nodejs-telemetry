@@ -194,8 +194,8 @@ describe('Span', () => {
 describe('NoopSpan', () => {
   it('should have default spanId and traceId', () => {
     const span = new NoopSpan();
-    expect(span.spanId).toBe('00000000-0000-0000-0000-000000000000');
-    expect(span.traceId).toBe('00000000-0000-0000-0000-000000000000');
+    expect(span.spanId).toBe('0000000000000000');
+    expect(span.traceId).toBe('00000000000000000000000000000000');
     expect(span.name).toBe('noop');
   });
 

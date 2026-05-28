@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { IdGenerator } from './id-generator';
 import { SpanPort } from '../ports/tracer.port';
 import { SpanStatus, SpanEvent } from '../types';
 import { contextManager } from './context-manager';
@@ -23,7 +23,7 @@ export class Span implements SpanPort {
   constructor(name: string, traceId: string, spanId?: string) {
     this.name = name;
     this.traceId = traceId;
-    this.spanId = spanId ?? randomUUID();
+    this.spanId = spanId ?? IdGenerator.spanId();
     this._startTime = new Date().toISOString();
   }
 
@@ -98,8 +98,8 @@ export class Span implements SpanPort {
  * (e.g., context corruption). All methods are safe no-ops.
  */
 export class NoopSpan implements SpanPort {
-  readonly spanId: string = '00000000-0000-0000-0000-000000000000';
-  readonly traceId: string = '00000000-0000-0000-0000-000000000000';
+  readonly spanId: string = '0000000000000000';
+  readonly traceId: string = '00000000000000000000000000000000';
   readonly name: string = 'noop';
 
   setAttribute(_key: string, _value: string | number | boolean): void {

@@ -4,7 +4,7 @@ import { SpanData, ResourceAttributes } from '../types';
 import { Span, NoopSpan } from '../telemetry/span';
 import { contextManager } from '../telemetry/context-manager';
 import { executeWithRetry } from './retry-policy';
-import { randomUUID } from 'node:crypto';
+import { IdGenerator } from '../telemetry/id-generator';
 
 /**
  * Default batch flush interval in milliseconds.
@@ -125,12 +125,12 @@ export class OtlpTraceExporter implements TracerPort {
           traceId = activeSpan.traceId;
           parentSpanId = activeSpan.spanId;
         } else {
-          traceId = randomUUID();
+          traceId = IdGenerator.traceId();
           parentSpanId = undefined;
         }
       }
 
-      const spanId = randomUUID();
+      const spanId = IdGenerator.spanId();
       const span = new ExportableSpan(
         name,
         traceId,
