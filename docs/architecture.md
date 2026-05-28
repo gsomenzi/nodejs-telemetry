@@ -20,13 +20,14 @@ block-beta
         block:ports["PORTS (interfaces)"]
             columns 3
             LoggerPort TracerPort MetricsPort
-            SpanPort ContextPropagatorPort space
+            SpanPort ContextPropagatorPort MessageContextHandlerPort
         end
 
         block:adapters["ADAPTERS (implementações)"]
             columns 3
             OtlpLogExporter OtlpTraceExporter OtlpMetricsExporter
             ConsoleLogAdapter NoopAdapter ContextPropagator
+            TelemetryContextHandler space space
         end
 
         block:nestjs["NESTJS (integração)"]
@@ -211,6 +212,44 @@ sequenceDiagram
     App->>App: span.end()
 ```
 
+## Fluxo de Propagação de Contexto via Eventos (TelemetryContextHandler)
+
+```mermaid
+sequenceDiagram
+    participant AppA as Serviço A (Publisher)
+    participant TCH_A as TelemetryContextHandler
+    participant CM_A as ContextManager A
+    participant Broker as Message Broker
+    participant TCH_B as TelemetryContextHandler
+    participant CM_B as ContextManager B
+    participant AppB as Serviço B (Consumer)
+
+    AppA->>AppA: tracer.startSpan("create-order")
+    AppA->>Broker: broker.publish("order.created", payload)
+    Note over Broker: Lib de mensageria chama onPublish internamente
+    Broker->>TCH_A: onPublish(metadata)
+    TCH_A->>CM_A: getCorrelationContext()
+    CM_A-->>TCH_A: { traceId, spanId }
+    TCH_A->>TCH_A: propagator.inject() → traceparent header
+    TCH_A-->>Broker: metadata + { traceparent: "00-abc...-def...-01" }
+    Broker->>Broker: envia mensagem com metadata enriquecido
+
+    Broker->>TCH_B: onConsume(metadata, "order.created")
+    TCH_B->>TCH_B: propagator.extract(metadata) → { traceId, spanId }
+    TCH_B->>TCH_B: new Span("consume:order.created", traceId)
+    TCH_B->>CM_B: setActiveSpan(span)
+    Note over CM_B: Span ativo — logs e spans filhos herdam o contexto
+
+    Broker->>AppB: handler(event)
+    AppB->>AppB: logger.info("Processando") — correlação automática
+    AppB->>AppB: tracer.startSpan("process-payment") — child span
+
+    AppB-->>Broker: handler concluído
+    Broker->>TCH_B: onConsumeEnd()
+    TCH_B->>TCH_B: span.setStatus("OK")
+    TCH_B->>TCH_B: span.end()
+```
+
 ## Decisões de Design
 
 ### 1. API Flat (start/end) — sem wrapping de callbacks
@@ -301,7 +340,17 @@ Isso garante interoperabilidade com qualquer sistema que siga o padrão W3C.
 
 Todos os exporters usam o protocolo OTLP (OpenTelemetry Protocol) via HTTP JSON. Isso garante compatibilidade com qualquer backend OTLP-compatível (Grafana Cloud, Datadog, New Relic, Jaeger, etc.) sem necessidade de adapters específicos por plataforma.
 
-### 11. Batching e flush periódico
+### 11. Propagação em eventos via slot pattern (MessageContextHandlerPort)
+
+O `TelemetryContextHandler` implementa um padrão de "slot" para propagação de contexto em sistemas de mensageria. A lib de telemetria não conhece o broker (Kafka, SQS, RabbitMQ) — ela apenas sabe injetar/extrair `traceparent` de um `Record<string, string>`. A lib de mensageria não conhece telemetria — ela apenas chama os métodos do handler nos momentos certos.
+
+Isso permite:
+- **Desacoplamento total** — nenhuma lib depende da outra diretamente
+- **Opt-in** — se nenhum handler for fornecido, a mensageria funciona sem telemetria
+- **Extensibilidade** — qualquer implementação de `MessageContextHandlerPort` pode ser plugada (não apenas telemetria)
+- **Testabilidade** — fácil de mockar em testes unitários
+
+### 12. Batching e flush periódico
 
 Os exporters OTLP acumulam dados em buffer e fazem flush periódico:
 - **Logs**: flush a cada 5s ou quando batch atinge 100 entries

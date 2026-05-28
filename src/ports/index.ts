@@ -8,3 +8,5 @@ export type { MetricsPort } from './metrics.port';
 export { METRICS_PORT } from './metrics.port';
 
 export type { ContextPropagatorPort } from './context-propagator.port';
+
+export type { MessageContextHandlerPort } from './message-context-handler.port';

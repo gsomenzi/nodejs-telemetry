@@ -457,6 +457,130 @@ tracestate: (opcional, vendor-specific)
 
 ---
 
+## Propagação de Contexto em Eventos/Mensageria
+
+### O problema
+
+Em arquiteturas orientadas a eventos, a trace precisa atravessar brokers de mensagem (Kafka, SQS, RabbitMQ, etc.). Diferente de HTTP, não há um mecanismo padrão de headers — cada broker tem seu próprio conceito de metadata.
+
+### A solução: TelemetryContextHandler
+
+O `TelemetryContextHandler` é um adapter que pode ser plugado em qualquer lib de mensageria que aceite um handler de contexto. Ele injeta/extrai o `traceparent` automaticamente nos metadata dos eventos.
+
+### Setup
+
+```typescript
+import { TelemetryFactory, TelemetryContextHandler } from '@gsomenzi/nodejs-telemetry';
+
+const { tracer } = TelemetryFactory.create({
+  serviceName: 'order-service',
+  environment: 'production',
+  exporter: { endpoint: 'https://otlp.grafana.net/otlp' },
+});
+
+// Cria o handler de contexto
+const contextHandler = new TelemetryContextHandler(tracer);
+
+// Plugar na lib de mensageria
+const broker = new MessageBroker({
+  contextHandler, // aceita MessageContextHandlerPort
+});
+```
+
+### Como funciona
+
+```
+Serviço A (publish)                    Serviço B (consume)
+─────────────────                      ─────────────────
+span ativo no contexto                 recebe evento
+        │                                      │
+        ▼                                      ▼
+onPublish(metadata)                    onConsume(metadata, eventName)
+        │                                      │
+        ▼                                      ▼
+injeta traceparent nos metadata        extrai traceId do traceparent
+        │                                      │
+        ▼                                      ▼
+broker envia com metadata              cria span filho com mesmo traceId
+                                               │
+                                               ▼
+                                       handler executa (logs correlacionados)
+                                               │
+                                               ▼
+                                       onConsumeEnd() → span.end()
+```
+
+### Exemplo completo: Serviço A publica
+
+```typescript
+import { TelemetryFactory, TelemetryContextHandler } from '@gsomenzi/nodejs-telemetry';
+
+const { tracer, logger } = TelemetryFactory.create({ ... });
+const contextHandler = new TelemetryContextHandler(tracer);
+
+async function createOrder(orderData: any) {
+  const span = tracer.startSpan('create-order');
+  span.setAttribute('order.id', orderData.id);
+
+  // O contextHandler.onPublish() é chamado internamente pela lib de mensageria
+  // Ele pega o span ativo e injeta traceparent nos metadata automaticamente
+  await broker.publish('order.created', orderData);
+
+  logger.info('Pedido criado e evento publicado', { orderId: orderData.id });
+  span.end();
+}
+```
+
+### Exemplo completo: Serviço B consome
+
+```typescript
+import { TelemetryFactory, TelemetryContextHandler } from '@gsomenzi/nodejs-telemetry';
+
+const { tracer, logger } = TelemetryFactory.create({ ... });
+const contextHandler = new TelemetryContextHandler(tracer);
+
+// A lib de mensageria chama onConsume/onConsumeEnd automaticamente
+broker.subscribe('order.created', async (event) => {
+  // Span "consume:order.created" já está ativo com traceId propagado
+  // Logs emitidos aqui terão correlação automática com a trace original
+  logger.info('Processando pedido', { orderId: event.orderId });
+
+  await processPayment(event);
+
+  logger.info('Pagamento processado', { orderId: event.orderId });
+});
+```
+
+### Interface que a lib de mensageria precisa implementar
+
+A lib de mensageria precisa aceitar um `MessageContextHandlerPort` e chamar os métodos nos momentos certos:
+
+```typescript
+// No publish
+async publish(topic: string, payload: any, metadata = {}) {
+  const enrichedMetadata = this.contextHandler?.onPublish(metadata) ?? metadata;
+  await this.broker.send(topic, payload, { headers: enrichedMetadata });
+}
+
+// No consume
+async handleMessage(event: BrokerMessage) {
+  this.contextHandler?.onConsume(event.headers, event.topic);
+  try {
+    await this.handler(event.payload);
+    this.contextHandler?.onConsumeEnd();
+  } catch (error) {
+    this.contextHandler?.onConsumeEnd(error as Error);
+    throw error;
+  }
+}
+```
+
+### Sem dependência direta
+
+A lib de mensageria não precisa depender de `@gsomenzi/nodejs-telemetry`. Basta aceitar qualquer objeto que implemente a interface `MessageContextHandlerPort`. Se nenhum handler for fornecido, a lib funciona normalmente sem telemetria.
+
+---
+
 ## Uso Standalone (sem NestJS)
 
 ### Setup básico

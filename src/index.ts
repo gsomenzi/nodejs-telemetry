@@ -6,6 +6,7 @@ export { TRACER_PORT } from './ports/tracer.port';
 export type { MetricsPort } from './ports/metrics.port';
 export { METRICS_PORT } from './ports/metrics.port';
 export type { ContextPropagatorPort } from './ports/context-propagator.port';
+export type { MessageContextHandlerPort } from './ports/message-context-handler.port';
 
 // Types
 export type {
@@ -30,6 +31,7 @@ export { ContextPropagator } from './adapters/context-propagator';
 export { OtlpLogExporter } from './adapters/otlp-log-exporter';
 export { OtlpTraceExporter } from './adapters/otlp-trace-exporter';
 export { OtlpMetricsExporter } from './adapters/otlp-metrics-exporter';
+export { TelemetryContextHandler } from './adapters/telemetry-context-handler';
 export { calculateDelay, shouldRetry, isRetryableError, executeWithRetry } from './adapters/retry-policy';
 
 // Errors

@@ -287,6 +287,25 @@ interface ContextPropagatorPort {
 - `inject` serializa o contexto no formato W3C Trace Context
 - Suporta headers como string ou string[] (usa primeiro elemento)
 
+### `MessageContextHandlerPort`
+
+Interface para propagação de contexto de trace em sistemas de mensageria/eventos. Projetada para ser implementada por adapters de telemetria e consumida por libs de mensageria como um "slot" de propagação.
+
+```typescript
+interface MessageContextHandlerPort {
+  onPublish(metadata: Record<string, string>): Record<string, string>;
+  onConsume(metadata: Record<string, string>, eventName: string): void;
+  onConsumeEnd(error?: Error): void;
+}
+```
+
+**Comportamento:**
+- `onPublish` injeta headers de trace (`traceparent`) nos metadata da mensagem a partir do span ativo
+- `onConsume` extrai o contexto de trace dos metadata e cria um span filho na mesma trace
+- `onConsumeEnd` encerra o span com status `OK` ou `ERROR`
+- Se não há span ativo no momento do publish, retorna metadata inalterado
+- Se não há contexto propagado no consume, cria uma trace nova
+
 ---
 
 ## Classes
@@ -471,6 +490,28 @@ new ContextPropagator()
 |--------|-----------|
 | `extract(headers)` | Parseia `traceparent`/`tracestate` → `CorrelationContext` ou `null` |
 | `inject(context)` | Serializa `CorrelationContext` → headers `traceparent`/`tracestate` |
+
+---
+
+### `TelemetryContextHandler`
+
+Implementa `MessageContextHandlerPort`. Adapter para propagação automática de trace em sistemas de mensageria/eventos.
+
+```typescript
+new TelemetryContextHandler(tracer: TracerPort)
+```
+
+| Método | Descrição |
+|--------|-----------|
+| `onPublish(metadata)` | Injeta `traceparent` nos metadata a partir do span ativo no contexto |
+| `onConsume(metadata, eventName)` | Extrai contexto e cria span filho `consume:{eventName}` |
+| `onConsumeEnd(error?)` | Encerra o span com status OK ou ERROR |
+
+**Comportamento:**
+- `onPublish` lê o span ativo via `ContextManager` (AsyncLocalStorage) — se não há span ativo, retorna metadata inalterado
+- `onConsume` cria um span com o `traceId` extraído dos metadata, mantendo a trace distribuída
+- `onConsumeEnd` é idempotente — chamadas sem span ativo são no-op
+- O span criado por `onConsume` é definido como ativo no `ContextManager`, então logs e spans filhos herdam o contexto automaticamente
 
 #### Formato traceparent
 
