@@ -1,0 +1,344 @@
+# Arquitetura
+
+## Visão Geral
+
+A biblioteca segue a arquitetura hexagonal (ports & adapters). O core contém a lógica de telemetria pura e define interfaces (ports) para os três pilares de observabilidade. Adapters concretos implementam esses ports para plataformas específicas (OTLP, console, noop).
+
+```mermaid
+block-beta
+    columns 1
+
+    block:lib["@gsomenzi/nodejs-telemetry"]
+        columns 1
+
+        block:core["CORE (puro TypeScript)"]
+            columns 3
+            TelemetryFactory LoggerService TracerService
+            MetricsService ConfigValidator ContextManager
+        end
+
+        block:ports["PORTS (interfaces)"]
+            columns 3
+            LoggerPort TracerPort MetricsPort
+            SpanPort ContextPropagatorPort space
+        end
+
+        block:adapters["ADAPTERS (implementações)"]
+            columns 3
+            OtlpLogExporter OtlpTraceExporter OtlpMetricsExporter
+            ConsoleLogAdapter NoopAdapter ContextPropagator
+        end
+
+        block:nestjs["NESTJS (integração)"]
+            columns 2
+            TelemetryModule TelemetryInterceptor
+        end
+    end
+```
+
+## Diagrama de Componentes
+
+```mermaid
+graph TB
+    subgraph "Core"
+        TF[TelemetryFactory]
+        LS[LoggerService]
+        TS[TracerService]
+        MS[MetricsService]
+        CV[ConfigValidator]
+        CM[ContextManager]
+    end
+
+    subgraph "Ports"
+        LP[LoggerPort]
+        TP[TracerPort]
+        MP[MetricsPort]
+        SP[SpanPort]
+        CPP[ContextPropagatorPort]
+    end
+
+    subgraph "Adapters"
+        OLE[OtlpLogExporter]
+        OTE[OtlpTraceExporter]
+        OME[OtlpMetricsExporter]
+        CLA[ConsoleLogAdapter]
+        NA[NoopAdapter]
+        CP[ContextPropagator]
+    end
+
+    subgraph "NestJS"
+        TM[TelemetryModule]
+        TI[TelemetryInterceptor]
+    end
+
+    subgraph "Microsserviço Consumidor"
+        SVC[UserService]
+        CTRL[Controller]
+    end
+
+    SVC -->|injeta| LP
+    SVC -->|injeta| TP
+    SVC -->|injeta| MP
+    CTRL -->|interceptado por| TI
+
+    TM -->|registra| OLE
+    TM -->|registra| OTE
+    TM -->|registra| OME
+
+    TF -->|cria| OLE
+    TF -->|cria| OTE
+    TF -->|cria| OME
+
+    LS --> LP
+    TS --> TP
+    MS --> MP
+    TS --> SP
+    CM --> CPP
+
+    OLE -.->|implements| LP
+    OTE -.->|implements| TP
+    OME -.->|implements| MP
+    CLA -.->|implements| LP
+    NA -.->|implements| LP
+    NA -.->|implements| TP
+    NA -.->|implements| MP
+end
+```
+
+## Fluxo de Emissão de Log
+
+```mermaid
+sequenceDiagram
+    participant App as Application Code
+    participant LS as LoggerService / OtlpLogExporter
+    participant CM as ContextManager
+    participant EXP as OTLP Endpoint
+    participant GC as Grafana Cloud
+
+    App->>LS: logger.info("Order created", { orderId })
+    LS->>CM: getCorrelationContext()
+    CM-->>LS: { traceId, spanId }
+    LS->>LS: buildStructuredLog(level, message, context, correlation)
+    LS->>LS: checkLogLevel(configured vs emitted)
+    alt Nível abaixo do mínimo
+        LS-->>App: descartado (no-op)
+    end
+    LS->>LS: buffer log
+    LS->>EXP: OTLP HTTP POST /v1/logs (batch periódico)
+    alt Falha de rede
+        EXP-->>LS: erro
+        LS->>LS: retry com backoff exponencial
+        alt Tentativas esgotadas
+            LS->>LS: discard + console.error
+        end
+    end
+    EXP->>GC: dados armazenados
+```
+
+## Fluxo de Criação de Trace (API Flat)
+
+```mermaid
+sequenceDiagram
+    participant App as Application Code
+    participant TS as TracerService / OtlpTraceExporter
+    participant CM as ContextManager (AsyncLocalStorage)
+    participant EXP as OTLP Endpoint
+
+    App->>TS: const span = tracer.startSpan("processOrder", { attributes })
+    TS->>CM: getActiveSpan()
+    alt Sem span/trace ativo
+        CM-->>TS: null
+        TS->>TS: generateTraceId() (crypto.randomUUID)
+    else Span ativo existe
+        CM-->>TS: parentSpan
+        TS->>TS: herda traceId do parent
+    end
+    TS->>TS: generateSpanId() (crypto.randomUUID)
+    TS->>CM: setActiveSpan(span) [armazenado no AsyncLocalStorage]
+    TS-->>App: Span instance
+
+    App->>App: ... executa operação (flat, sem callback) ...
+
+    App->>TS: span.end()
+    TS->>TS: registra endTimestamp
+    TS->>CM: restoreParentSpan()
+    TS->>TS: buffer span data
+    TS->>EXP: OTLP HTTP POST /v1/traces (batch periódico)
+```
+
+## Fluxo de Registro de Métricas
+
+```mermaid
+sequenceDiagram
+    participant App as Application Code
+    participant MS as MetricsService / OtlpMetricsExporter
+    participant EXP as OTLP Endpoint
+
+    App->>MS: metrics.incrementCounter("orders_created", 1, { region })
+    MS->>MS: attachResourceAttributes(serviceName, version, environment)
+    MS->>MS: buffer metric data point
+    MS->>EXP: OTLP HTTP POST /v1/metrics (flush periódico 60s)
+```
+
+## Fluxo de Propagação de Contexto (Implícita via AsyncLocalStorage)
+
+```mermaid
+sequenceDiagram
+    participant ExtSvc as Serviço Externo
+    participant HTTP as HTTP Layer
+    participant TI as TelemetryInterceptor
+    participant CM as ContextManager (AsyncLocalStorage)
+    participant App as Application Code
+    participant OutHTTP as HTTP de Saída
+
+    ExtSvc->>HTTP: Request com header traceparent
+    HTTP->>TI: Requisição de entrada
+    TI->>CM: extractContext(headers) via ContextPropagator
+    CM->>CM: parse traceparent/tracestate (W3C Trace Context)
+    TI->>CM: setActiveSpan(newChildSpan)
+    Note over CM: Armazenado no AsyncLocalStorage — disponível implicitamente
+    TI->>App: prossegue (contexto disponível automaticamente)
+
+    App->>App: const span = tracer.startSpan("doWork")
+    Note over App: Automaticamente filho do span do interceptor
+
+    App->>OutHTTP: Chamada HTTP para outro serviço
+    OutHTTP->>CM: getCorrelationContext()
+    CM-->>OutHTTP: { traceId, spanId } (do AsyncLocalStorage)
+    OutHTTP->>OutHTTP: injectHeaders(traceparent, tracestate)
+    OutHTTP->>ExtSvc: Request com contexto propagado
+
+    App->>App: span.end()
+```
+
+## Decisões de Design
+
+### 1. API Flat (start/end) — sem wrapping de callbacks
+
+A API de tracing usa o padrão explícito `startSpan` / `span.end()` em vez de funções que envolvem callbacks como `withSpan`, `withTrace` ou `withContext`. Isso evita:
+
+- **Nesting de callbacks** que prejudica a legibilidade
+- **Indentação excessiva** em operações sequenciais com múltiplos spans
+- **Dificuldade de refatoração** quando lógica precisa ser extraída para funções separadas
+
+```typescript
+// ✅ API flat — como a biblioteca funciona
+const span = tracer.startSpan('processOrder');
+span.setAttribute('orderId', order.id);
+
+const result = await orderService.process(order);
+await paymentService.charge(order.total);
+
+span.end();
+```
+
+### 2. Propagação implícita via AsyncLocalStorage
+
+O `ContextManager` usa `AsyncLocalStorage` do Node.js internamente para propagar o contexto de trace automaticamente. Qualquer código executando no mesmo fluxo assíncrono tem acesso ao span ativo sem precisar:
+
+- Passar o span como parâmetro entre funções
+- Envolver código em callbacks de contexto
+- Gerenciar manualmente a hierarquia de spans
+
+```typescript
+const parentSpan = tracer.startSpan('handleRequest');
+
+// Qualquer span criado aqui herda o traceId do parent automaticamente
+await processOrder(order);
+
+parentSpan.end();
+
+async function processOrder(order: Order) {
+  const span = tracer.startSpan('processOrder'); // filho automático
+  // ...
+  span.end();
+}
+```
+
+### 3. Core framework-independent
+
+O core não importa `@nestjs/*` nem nenhum framework HTTP/DI. Isso permite:
+- Usar em contextos não-NestJS (workers, scripts, lambdas) via `TelemetryFactory`
+- Testar sem bootstrap de framework
+- Extrair como biblioteca npm independente
+
+### 4. Adapters como classes puras
+
+Os adapters são classes TypeScript puras sem decorators de framework. O `TelemetryModule` do NestJS registra-os como providers via factory, mantendo o core independente de DI container.
+
+### 5. Telemetria nunca crasha a aplicação
+
+Todos os métodos dos ports (exceto inicialização) são fail-safe: erros de export são capturados internamente, logados via console, e os dados são descartados. A aplicação continua funcionando normalmente mesmo se a plataforma de observabilidade estiver indisponível.
+
+### 6. Configuração fail-fast
+
+Erros de configuração (campos obrigatórios ausentes, valores inválidos) lançam `InvalidConfigurationError` imediatamente na inicialização. Isso previne que a aplicação rode com telemetria quebrada silenciosamente.
+
+### 7. Módulo global no NestJS
+
+O `TelemetryModule` é registrado como `@Global()` para que os ports (`LOGGER_PORT`, `TRACER_PORT`, `METRICS_PORT`) estejam disponíveis em todos os módulos sem necessidade de re-importação.
+
+### 8. Span restaura contexto anterior ao finalizar
+
+Quando `span.end()` é chamado, o `ContextManager` restaura o span anterior (pai) como span ativo:
+
+```typescript
+const parent = tracer.startSpan('handleRequest');
+  const child = tracer.startSpan('queryDatabase');
+  child.end(); // restaura parent como span ativo
+parent.end();
+```
+
+### 9. W3C Trace Context para propagação entre serviços
+
+O `ContextPropagator` segue a especificação W3C Trace Context para serializar/desserializar contexto em headers HTTP:
+- `traceparent`: `{version}-{trace-id}-{parent-id}-{trace-flags}`
+- `tracestate`: metadados vendor-specific opcionais
+
+Isso garante interoperabilidade com qualquer sistema que siga o padrão W3C.
+
+### 10. OTLP como protocolo de export
+
+Todos os exporters usam o protocolo OTLP (OpenTelemetry Protocol) via HTTP JSON. Isso garante compatibilidade com qualquer backend OTLP-compatível (Grafana Cloud, Datadog, New Relic, Jaeger, etc.) sem necessidade de adapters específicos por plataforma.
+
+### 11. Batching e flush periódico
+
+Os exporters OTLP acumulam dados em buffer e fazem flush periódico:
+- **Logs**: flush a cada 5s ou quando batch atinge 100 entries
+- **Traces**: flush a cada 5s ou quando batch atinge 512 spans
+- **Métricas**: flush a cada 60s
+
+Timers são `unref()`'d para não impedir o encerramento do processo.
+
+## Extensibilidade
+
+Para adicionar uma nova plataforma de observabilidade:
+
+1. Crie uma classe implementando `LoggerPort`, `TracerPort` e/ou `MetricsPort`
+2. Passe a instância no `TelemetryModule.forRoot()` ou use diretamente
+
+Para uso com NestJS (substituindo o adapter padrão):
+
+```typescript
+import { Module } from '@nestjs/common';
+import { LOGGER_PORT, TRACER_PORT, METRICS_PORT } from '@gsomenzi/nodejs-telemetry';
+
+@Module({
+  providers: [
+    { provide: LOGGER_PORT, useClass: MyCustomLoggerAdapter },
+    { provide: TRACER_PORT, useClass: MyCustomTracerAdapter },
+    { provide: METRICS_PORT, useClass: MyCustomMetricsAdapter },
+  ],
+  exports: [LOGGER_PORT, TRACER_PORT, METRICS_PORT],
+})
+export class CustomTelemetryModule {}
+```
+
+Para desabilitar telemetria completamente:
+
+```typescript
+import { NoopAdapter } from '@gsomenzi/nodejs-telemetry';
+
+// O NoopAdapter implementa LoggerPort, TracerPort e MetricsPort como no-ops
+const noop = new NoopAdapter();
+```
