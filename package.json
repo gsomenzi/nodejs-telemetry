@@ -1,6 +1,6 @@
 {
   "name": "@gsomenzi/nodejs-telemetry",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "author": "Guilherme Somenzi <somenziguilherme@gmail.com>",
   "repository": {
     "type": "git",

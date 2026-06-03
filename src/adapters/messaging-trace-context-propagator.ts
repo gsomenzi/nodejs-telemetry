@@ -64,7 +64,10 @@ export class MessagingTraceContextPropagator implements TraceContextPropagatorPo
      *
      * Parses the W3C traceparent header from the carrier, creates a span linked to
      * the propagated trace, sets it as active in the contextManager, and runs the
-     * provided function. The span is restored after execution.
+     * provided function within an isolated async context.
+     *
+     * Uses contextManager.run() to ensure each consumed event gets its own
+     * AsyncLocalStorage context, preventing span leakage between handlers.
      *
      * @param carrier - The trace context carrier extracted from event metadata.
      * @param fn - The function to execute within the restored trace context.
@@ -73,16 +76,14 @@ export class MessagingTraceContextPropagator implements TraceContextPropagatorPo
         const extracted = this.propagator.extract(carrier);
 
         if (extracted) {
-            // Create a linked span within the propagated trace context
-            const span = new Span(`consume`, extracted.traceId, extracted.spanId);
-            contextManager.setActiveSpan(span);
-            try {
+            await contextManager.run(async () => {
+                // Create a linked span within the propagated trace context
+                const span = new Span(`consume`, extracted.traceId, extracted.spanId);
+                contextManager.setActiveSpan(span);
                 await fn();
-            } finally {
-                contextManager.restoreParentSpan();
-            }
+            });
         } else {
-            await fn();
+            await contextManager.run(() => fn());
         }
     }
 }
