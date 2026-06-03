@@ -32,6 +32,8 @@ export { OtlpLogExporter } from './adapters/otlp-log-exporter';
 export { OtlpTraceExporter } from './adapters/otlp-trace-exporter';
 export { OtlpMetricsExporter } from './adapters/otlp-metrics-exporter';
 export { TelemetryContextHandler } from './adapters/telemetry-context-handler';
+export { MessagingTraceContextPropagator } from './adapters/messaging-trace-context-propagator';
+export type { TraceContextPropagatorPort, TraceCarrier } from './adapters/messaging-trace-context-propagator';
 export { calculateDelay, shouldRetry, isRetryableError, executeWithRetry } from './adapters/retry-policy';
 
 // Errors

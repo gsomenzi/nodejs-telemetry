@@ -9,3 +9,5 @@ export { OtlpLogExporter } from './otlp-log-exporter';
 export { OtlpTraceExporter } from './otlp-trace-exporter';
 export { OtlpMetricsExporter } from './otlp-metrics-exporter';
 export { TelemetryContextHandler } from './telemetry-context-handler';
+export { MessagingTraceContextPropagator } from './messaging-trace-context-propagator';
+export type { TraceContextPropagatorPort, TraceCarrier } from './messaging-trace-context-propagator';
