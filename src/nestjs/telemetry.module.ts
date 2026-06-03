@@ -6,6 +6,7 @@ import { ConfigValidator, ResolvedTelemetryConfig } from '../telemetry/config-va
 import { OtlpLogExporter } from '../adapters/otlp-log-exporter';
 import { OtlpTraceExporter } from '../adapters/otlp-trace-exporter';
 import { OtlpMetricsExporter } from '../adapters/otlp-metrics-exporter';
+import { registerGlobalTracer } from '../telemetry/global-tracer-registration';
 import { LogLevel, ExporterConfig } from '../types';
 
 /**
@@ -72,6 +73,11 @@ export class TelemetryModule {
   static forRoot(options: TelemetryModuleOptions): DynamicModule {
     const resolvedConfig = ConfigValidator.validate(options);
 
+    // Register global TracerProvider and W3CTraceContextPropagator with @opentelemetry/api.
+    // This enables propagation.inject() to produce valid traceparent headers
+    // in any library that depends on the OTel API (e.g., messaging libs).
+    registerGlobalTracer(resolvedConfig);
+
     const providers: Provider[] = [
       {
         provide: LOGGER_PORT,
@@ -118,6 +124,9 @@ export class TelemetryModule {
       provide: TRACER_PORT,
       useFactory: (moduleOptions: TelemetryModuleOptions) => {
         const resolvedConfig = ConfigValidator.validate(moduleOptions);
+        // Register global TracerProvider and W3CTraceContextPropagator.
+        // Must happen before any library calls propagation.inject().
+        registerGlobalTracer(resolvedConfig);
         return new OtlpTraceExporter(resolvedConfig);
       },
       inject: [TELEMETRY_MODULE_OPTIONS],

@@ -15,6 +15,7 @@ block-beta
             columns 3
             TelemetryFactory LoggerService TracerService
             MetricsService ConfigValidator ContextManager
+            GlobalTracerRegistration space space
         end
 
         block:ports["PORTS (interfaces)"]
@@ -48,6 +49,7 @@ graph TB
         MS[MetricsService]
         CV[ConfigValidator]
         CM[ContextManager]
+        GTR[GlobalTracerRegistration]
     end
 
     subgraph "Ports"
@@ -72,6 +74,12 @@ graph TB
         TI[TelemetryInterceptor]
     end
 
+    subgraph "OpenTelemetry API (global)"
+        OTEL_API["@opentelemetry/api"]
+        NTP[NodeTracerProvider]
+        W3C[W3CTraceContextPropagator]
+    end
+
     subgraph "Microsserviço Consumidor"
         SVC[UserService]
         CTRL[Controller]
@@ -85,10 +93,16 @@ graph TB
     TM -->|registra| OLE
     TM -->|registra| OTE
     TM -->|registra| OME
+    TM -->|chama| GTR
 
     TF -->|cria| OLE
     TF -->|cria| OTE
     TF -->|cria| OME
+    TF -->|chama| GTR
+
+    GTR -->|provider.register| OTEL_API
+    GTR -->|cria| NTP
+    GTR -->|configura| W3C
 
     LS --> LP
     TS --> TP
@@ -340,7 +354,19 @@ Isso garante interoperabilidade com qualquer sistema que siga o padrão W3C.
 
 Todos os exporters usam o protocolo OTLP (OpenTelemetry Protocol) via HTTP JSON. Isso garante compatibilidade com qualquer backend OTLP-compatível (Grafana Cloud, Datadog, New Relic, Jaeger, etc.) sem necessidade de adapters específicos por plataforma.
 
-### 11. Propagação em eventos via slot pattern (MessageContextHandlerPort)
+### 11. Registro global do TracerProvider e Propagator via @opentelemetry/api
+
+Na inicialização (via `TelemetryFactory.create()` ou `TelemetryModule.forRoot()`), a lib registra um `NodeTracerProvider` global e um `W3CTraceContextPropagator` usando a API singleton do `@opentelemetry/api`. Isso garante que:
+
+- `trace.getTracer()` retorna tracers reais (não noop)
+- `propagation.inject(context.active(), carrier)` serializa `traceparent`/`tracestate` no carrier
+- Qualquer lib que dependa da API global do OpenTelemetry (ex: `@gsomenzi/nodejs-messaging`) funciona corretamente
+
+Sem esse registro, a `@opentelemetry/api` usa implementações noop por padrão, fazendo com que `propagation.inject()` produza carriers vazios `{}`.
+
+O registro é idempotente — chamadas múltiplas são seguras. O shutdown do provider é feito em `TelemetryFactory.shutdown()`.
+
+### 12. Propagação em eventos via slot pattern (MessageContextHandlerPort)
 
 O `TelemetryContextHandler` implementa um padrão de "slot" para propagação de contexto em sistemas de mensageria. A lib de telemetria não conhece o broker (Kafka, SQS, RabbitMQ) — ela apenas sabe injetar/extrair `traceparent` de um `Record<string, string>`. A lib de mensageria não conhece telemetria — ela apenas chama os métodos do handler nos momentos certos.
 
@@ -350,7 +376,7 @@ Isso permite:
 - **Extensibilidade** — qualquer implementação de `MessageContextHandlerPort` pode ser plugada (não apenas telemetria)
 - **Testabilidade** — fácil de mockar em testes unitários
 
-### 12. Batching e flush periódico
+### 13. Batching e flush periódico
 
 Os exporters OTLP acumulam dados em buffer e fazem flush periódico:
 - **Logs**: flush a cada 5s ou quando batch atinge 100 entries

@@ -2,8 +2,7 @@ import { defineConfig } from "tsup";
 
 export default defineConfig({
   entry: {
-    index: "src/index.ts",
-    "nestjs/index": "src/nestjs/index.ts"
+    index: "src/index.ts"
   },
   format: ["esm", "cjs"],
   dts: true,

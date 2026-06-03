@@ -45,6 +45,18 @@ export { SpanContextError } from './errors/span-context.error';
 export { TelemetryFactory } from './telemetry/telemetry-factory';
 export type { TelemetryInstance } from './telemetry/telemetry-factory';
 
+// Core — Global TracerProvider registration
+export {
+  registerGlobalTracer,
+  shutdownGlobalTracer,
+  isGlobalTracerRegistered,
+} from './telemetry/global-tracer-registration';
+
 // Core — ConfigValidator and ResolvedTelemetryConfig
 export { ConfigValidator } from './telemetry/config-validator';
 export type { ResolvedTelemetryConfig, ResolvedExporterConfig } from './telemetry/config-validator';
+
+// NestJS integration
+export { TelemetryModule } from './nestjs/telemetry.module';
+export type { TelemetryModuleOptions, TelemetryModuleAsyncOptions } from './nestjs/telemetry.module';
+export { TelemetryInterceptor } from './nestjs/telemetry.interceptor';

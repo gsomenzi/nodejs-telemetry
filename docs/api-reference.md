@@ -324,15 +324,17 @@ class TelemetryFactory {
 #### `create(config)`
 
 1. Valida config via `ConfigValidator` — lança `InvalidConfigurationError` se inválida
-2. Cria `OtlpLogExporter`, `OtlpTraceExporter`, `OtlpMetricsExporter` com a config resolvida
-3. Retorna `TelemetryInstance` com os três ports prontos para uso
+2. Registra `NodeTracerProvider` e `W3CTraceContextPropagator` globalmente via `@opentelemetry/api` (idempotente)
+3. Cria `OtlpLogExporter`, `OtlpTraceExporter`, `OtlpMetricsExporter` com a config resolvida
+4. Retorna `TelemetryInstance` com os três ports prontos para uso
 
 #### `shutdown()`
 
 1. Faz flush de todos os dados pendentes nos exporters
-2. Aplica timeout de 5 segundos (best-effort)
-3. Nunca lança exceção — erros são capturados internamente
-4. Limpa referências internas após conclusão
+2. Faz shutdown do global TracerProvider (flush de spans do SDK OTel)
+3. Aplica timeout de 5 segundos (best-effort)
+4. Nunca lança exceção — erros são capturados internamente
+5. Limpa referências internas após conclusão
 
 ---
 
@@ -568,8 +570,8 @@ interface TelemetryModuleAsyncOptions {
 ```
 
 **Comportamento:**
-- `forRoot` valida config, cria exporters OTLP, registra como providers globais
-- `forRootAsync` resolve config via factory antes de criar exporters
+- `forRoot` valida config, registra global TracerProvider/Propagator, cria exporters OTLP, registra como providers globais
+- `forRootAsync` resolve config via factory antes de criar exporters e registrar global TracerProvider
 - Registra `LOGGER_PORT`, `TRACER_PORT`, `METRICS_PORT` como tokens de injeção
 - Módulo `@Global()` — ports disponíveis em todos os módulos sem re-importação
 
@@ -594,6 +596,42 @@ class TelemetryInterceptor implements NestInterceptor {
 - Injeta headers de propagação na resposta
 - Em caso de erro: registra erro no span, define status `ERROR`
 - Usa `contextManager.run()` para isolar contexto por requisição
+
+---
+
+### Global TracerProvider Registration
+
+Funções para registrar/desregistrar o `NodeTracerProvider` e `W3CTraceContextPropagator` globalmente via `@opentelemetry/api`. Necessário para interoperabilidade com libs que usam a API global do OpenTelemetry (ex: `propagation.inject()` na lib de messaging).
+
+```typescript
+import {
+  registerGlobalTracer,
+  shutdownGlobalTracer,
+  isGlobalTracerRegistered,
+} from '@gsomenzi/nodejs-telemetry';
+```
+
+#### `registerGlobalTracer(config: ResolvedTelemetryConfig): void`
+
+Registra um `NodeTracerProvider` global com `BatchSpanProcessor` + `OTLPTraceExporter`, e configura `W3CTraceContextPropagator` como propagator global.
+
+**Comportamento:**
+- Idempotente — chamadas múltiplas são seguras (só registra na primeira vez)
+- Chamado automaticamente por `TelemetryFactory.create()` e `TelemetryModule.forRoot()`/`forRootAsync()`
+- Após o registro, `trace.getTracer()` e `propagation.inject()` da `@opentelemetry/api` retornam implementações reais
+
+#### `shutdownGlobalTracer(): Promise<void>`
+
+Faz shutdown do provider global, flushing spans pendentes.
+
+**Comportamento:**
+- Nunca lança exceção (best-effort)
+- Após shutdown, `registerGlobalTracer` pode ser chamado novamente
+- Chamado automaticamente por `TelemetryFactory.shutdown()`
+
+#### `isGlobalTracerRegistered(): boolean`
+
+Retorna se o provider global está registrado. Útil para diagnostics e testes.
 
 ---
 

@@ -6,6 +6,7 @@ import { ConfigValidator } from './config-validator';
 import { OtlpLogExporter } from '../adapters/otlp-log-exporter';
 import { OtlpTraceExporter } from '../adapters/otlp-trace-exporter';
 import { OtlpMetricsExporter } from '../adapters/otlp-metrics-exporter';
+import { registerGlobalTracer, shutdownGlobalTracer } from './global-tracer-registration';
 
 /**
  * The result of TelemetryFactory.create() — provides access to all telemetry ports.
@@ -66,6 +67,11 @@ export class TelemetryFactory {
     // Validate and resolve config (throws InvalidConfigurationError on bad config)
     const resolvedConfig = ConfigValidator.validate(config);
 
+    // Register global TracerProvider and W3CTraceContextPropagator with @opentelemetry/api.
+    // This enables interoperability with any library that uses the OTel API
+    // (e.g., propagation.inject() in messaging libs will produce valid traceparent headers).
+    registerGlobalTracer(resolvedConfig);
+
     // Create OTLP exporters wired with the resolved config
     const logExporter = new OtlpLogExporter(resolvedConfig);
     const traceExporter = new OtlpTraceExporter(resolvedConfig);
@@ -93,6 +99,13 @@ export class TelemetryFactory {
       const shutdownPromises = TelemetryFactory.exporters.map((exporter) =>
         exporter.shutdown().catch(() => {
           // Swallow individual exporter shutdown errors
+        }),
+      );
+
+      // Also shutdown the global TracerProvider (flushes OTel SDK spans)
+      shutdownPromises.push(
+        shutdownGlobalTracer().catch(() => {
+          // Swallow global provider shutdown errors
         }),
       );
 

@@ -6,7 +6,7 @@
 
 ```typescript
 import { Module } from '@nestjs/common';
-import { TelemetryModule } from '@gsomenzi/nodejs-telemetry/nestjs';
+import { TelemetryModule } from '@gsomenzi/nodejs-telemetry';
 
 @Module({
   imports: [
@@ -28,13 +28,14 @@ Isso registra automaticamente:
 - `OtlpTraceExporter` como `TRACER_PORT`
 - `OtlpMetricsExporter` como `METRICS_PORT`
 - Todos como providers globais (disponíveis em qualquer módulo)
+- Registra `NodeTracerProvider` e `W3CTraceContextPropagator` globalmente via `@opentelemetry/api`
 
 ### Configuração assíncrona (via ConfigService)
 
 ```typescript
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TelemetryModule } from '@gsomenzi/nodejs-telemetry/nestjs';
+import { TelemetryModule } from '@gsomenzi/nodejs-telemetry';
 
 @Module({
   imports: [
@@ -347,8 +348,7 @@ setQueueDepth(depth: number, queueName: string) {
 ```typescript
 import { Module } from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
-import { TelemetryModule, TelemetryInterceptor } from '@gsomenzi/nodejs-telemetry/nestjs';
-import { TracerPort, TRACER_PORT } from '@gsomenzi/nodejs-telemetry';
+import { TelemetryModule, TelemetryInterceptor, TracerPort, TRACER_PORT } from '@gsomenzi/nodejs-telemetry';
 
 @Module({
   imports: [

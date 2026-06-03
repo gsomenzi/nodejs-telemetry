@@ -1,6 +1,6 @@
 {
   "name": "@gsomenzi/nodejs-telemetry",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "author": "Guilherme Somenzi <somenziguilherme@gmail.com>",
   "repository": {
     "type": "git",
@@ -29,16 +29,6 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
-    },
-    "./nestjs": {
-      "import": {
-        "types": "./dist/nestjs/index.d.ts",
-        "default": "./dist/nestjs/index.js"
-      },
-      "require": {
-        "types": "./dist/nestjs/index.d.cts",
-        "default": "./dist/nestjs/index.cjs"
-      }
     }
   },
   "scripts": {
@@ -51,6 +41,13 @@
     "bump": "./scripts/bump-version.sh"
   },
   "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/core": "^2.7.1",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.218.0",
+    "@opentelemetry/resources": "^2.7.1",
+    "@opentelemetry/sdk-trace-base": "^2.7.1",
+    "@opentelemetry/sdk-trace-node": "^2.7.1",
+    "@opentelemetry/semantic-conventions": "^1.41.1",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3"
   },

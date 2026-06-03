@@ -14,6 +14,7 @@ Uma biblioteca de observabilidade que cobre os três pilares — logs estruturad
 - **Propagação implícita** — `AsyncLocalStorage` propaga contexto automaticamente entre operações async
 - **Três pilares** — Logs estruturados, traces distribuídos e métricas em uma API unificada
 - **W3C Trace Context** — Propagação de contexto entre serviços via `traceparent`/`tracestate`
+- **Global TracerProvider** — Registra `NodeTracerProvider` e `W3CTraceContextPropagator` globalmente via `@opentelemetry/api`, garantindo interoperabilidade com qualquer lib que use a API global do OpenTelemetry (ex: `propagation.inject()` funciona corretamente)
 - **Correlation automática** — Logs enriquecidos com `traceId`/`spanId` do span ativo
 - **Retry + Discard** — Backoff exponencial para erros transitórios, discard com log para permanentes
 - **Fail-safe** — Telemetria nunca crasha a aplicação; erros são capturados internamente
@@ -51,7 +52,7 @@ npm install @nestjs/common reflect-metadata rxjs
 
 ```typescript
 import { Module } from '@nestjs/common';
-import { TelemetryModule } from '@gsomenzi/nodejs-telemetry/nestjs';
+import { TelemetryModule } from '@gsomenzi/nodejs-telemetry';
 
 @Module({
   imports: [
@@ -73,7 +74,7 @@ export class AppModule {}
 ```typescript
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TelemetryModule } from '@gsomenzi/nodejs-telemetry/nestjs';
+import { TelemetryModule } from '@gsomenzi/nodejs-telemetry';
 
 @Module({
   imports: [
@@ -170,8 +171,7 @@ export class OrderMetrics {
 ```typescript
 import { Module } from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
-import { TelemetryInterceptor, TRACER_PORT } from '@gsomenzi/nodejs-telemetry/nestjs';
-import { TracerPort } from '@gsomenzi/nodejs-telemetry';
+import { TelemetryInterceptor, TracerPort, TRACER_PORT } from '@gsomenzi/nodejs-telemetry';
 
 @Module({
   providers: [
@@ -305,25 +305,47 @@ src/
 ├── telemetry/          Componentes core
 │   ├── config-validator.ts
 │   ├── context-manager.ts
+│   ├── global-tracer-registration.ts  ← Registro global OTel SDK
 │   ├── logger-service.ts
 │   ├── tracer-service.ts
 │   ├── metrics-service.ts
 │   ├── span.ts
 │   └── telemetry-factory.ts
 ├── nestjs/             Integração NestJS (módulo + interceptor)
-└── index.ts            Barrel export
+└── index.ts            Barrel export (entry point único)
 ```
 
 ## Exports
 
-A lib expõe dois entry points:
+Tudo é exportado de um único entry point:
 
 ```typescript
-// Entry point principal — ports, tipos, adapters, erros, factory
-import { TelemetryFactory, LoggerPort, TracerPort, MetricsPort, ... } from '@gsomenzi/nodejs-telemetry';
+import {
+  // Ports
+  LoggerPort, LOGGER_PORT,
+  TracerPort, TRACER_PORT,
+  MetricsPort, METRICS_PORT,
 
-// Entry point NestJS — módulo e interceptor
-import { TelemetryModule, TelemetryInterceptor } from '@gsomenzi/nodejs-telemetry/nestjs';
+  // Factory (standalone)
+  TelemetryFactory,
+
+  // NestJS
+  TelemetryModule, TelemetryInterceptor,
+
+  // Adapters
+  OtlpLogExporter, OtlpTraceExporter, OtlpMetricsExporter,
+  ConsoleLogAdapter, NoopAdapter, ContextPropagator, TelemetryContextHandler,
+
+  // Global TracerProvider (OpenTelemetry API interop)
+  registerGlobalTracer, shutdownGlobalTracer, isGlobalTracerRegistered,
+
+  // Errors
+  TelemetryError, InvalidConfigurationError, ExporterConnectionError,
+  ExporterTimeoutError, SpanContextError,
+
+  // Config
+  ConfigValidator,
+} from '@gsomenzi/nodejs-telemetry';
 ```
 
 ## Hierarquia de Erros
