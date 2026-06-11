@@ -14,6 +14,7 @@ export type {
   ExporterConfig,
   RetryConfig,
   LogLevel,
+  LoggerAdapterType,
   CorrelationContext,
   StructuredLog,
   ResourceAttributes,
@@ -27,6 +28,8 @@ export type {
 // Adapters
 export { ConsoleLogAdapter } from './adapters/console-log-adapter';
 export { NoopAdapter } from './adapters/noop-adapter';
+export { NoopLoggerAdapter } from './adapters/noop-logger-adapter';
+export { StdoutLogSink } from './adapters/stdout-log-sink';
 export { ContextPropagator } from './adapters/context-propagator';
 export { OtlpLogExporter } from './adapters/otlp-log-exporter';
 export { OtlpTraceExporter } from './adapters/otlp-trace-exporter';
@@ -45,7 +48,15 @@ export { SpanContextError } from './errors/span-context.error';
 
 // Core — TelemetryFactory and TelemetryInstance
 export { TelemetryFactory } from './telemetry/telemetry-factory';
-export type { TelemetryInstance } from './telemetry/telemetry-factory';
+export type { TelemetryInstance, TelemetryFactoryOptions } from './telemetry/telemetry-factory';
+
+// Core — Logger adapter factory
+export {
+  createLoggerAdapter,
+  isShutdownableLogger,
+} from './telemetry/logger-adapter.factory';
+export type { CreateLoggerAdapterOptions } from './telemetry/logger-adapter.factory';
+export type { LogHandler } from './telemetry/logger-service';
 
 // Core — Global TracerProvider registration
 export {

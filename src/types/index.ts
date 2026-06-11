@@ -1,8 +1,12 @@
+export type LoggerAdapterType = 'otlp' | 'console' | 'noop';
+
 export interface TelemetryConfig {
   serviceName: string;
   serviceVersion?: string;
   environment: string;
   logLevel?: LogLevel;
+  /** Built-in logger adapter. Defaults to 'otlp'. */
+  loggerAdapter?: LoggerAdapterType;
   exporter: ExporterConfig;
 }
 

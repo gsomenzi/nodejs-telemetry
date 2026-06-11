@@ -27,8 +27,8 @@ block-beta
         block:adapters["ADAPTERS (implementações)"]
             columns 3
             OtlpLogExporter OtlpTraceExporter OtlpMetricsExporter
-            ConsoleLogAdapter NoopAdapter ContextPropagator
-            TelemetryContextHandler space space
+            ConsoleLogAdapter NoopLoggerAdapter NoopAdapter
+            StdoutLogSink ContextPropagator TelemetryContextHandler
         end
 
         block:nestjs["NESTJS (integração)"]
@@ -65,8 +65,10 @@ graph TB
         OTE[OtlpTraceExporter]
         OME[OtlpMetricsExporter]
         CLA[ConsoleLogAdapter]
+        NLA[NoopLoggerAdapter]
         NA[NoopAdapter]
         CP[ContextPropagator]
+        LAF[LoggerAdapterFactory]
     end
 
     subgraph "NestJS"
@@ -90,12 +92,15 @@ graph TB
     SVC -->|injeta| MP
     CTRL -->|interceptado por| TI
 
-    TM -->|registra| OLE
+    TM -->|registra| LAF
+    LAF -->|cria| OLE
+    LAF -->|cria| CLA
+    LAF -->|cria| NLA
     TM -->|registra| OTE
     TM -->|registra| OME
     TM -->|chama| GTR
 
-    TF -->|cria| OLE
+    TF -->|cria via| LAF
     TF -->|cria| OTE
     TF -->|cria| OME
     TF -->|chama| GTR
@@ -114,6 +119,8 @@ graph TB
     OTE -.->|implements| TP
     OME -.->|implements| MP
     CLA -.->|implements| LP
+    CLA -->|compõe| LS
+    NLA -.->|implements| LP
     NA -.->|implements| LP
     NA -.->|implements| TP
     NA -.->|implements| MP
@@ -125,29 +132,32 @@ end
 ```mermaid
 sequenceDiagram
     participant App as Application Code
-    participant LS as LoggerService / OtlpLogExporter
+    participant Adapter as LoggerPort (OtlpLogExporter / ConsoleLogAdapter)
+    participant LS as LoggerService (ConsoleLogAdapter)
     participant CM as ContextManager
-    participant EXP as OTLP Endpoint
-    participant GC as Grafana Cloud
+    participant Sink as OTLP Endpoint / Stdout
 
-    App->>LS: logger.info("Order created", { orderId })
-    LS->>CM: getCorrelationContext()
-    CM-->>LS: { traceId, spanId }
-    LS->>LS: buildStructuredLog(level, message, context, correlation)
-    LS->>LS: checkLogLevel(configured vs emitted)
-    alt Nível abaixo do mínimo
-        LS-->>App: descartado (no-op)
+    App->>Adapter: logger.info("Order created", { orderId })
+    alt ConsoleLogAdapter
+        Adapter->>LS: log('info', message, context)
+        LS->>CM: getCorrelationContext()
+        CM-->>LS: { traceId, spanId }
+        LS->>LS: buildStructuredLog + filter by level
+        LS->>Sink: StdoutLogSink → JSON line
+    else OtlpLogExporter
+        Adapter->>CM: getCorrelationContext()
+        CM-->>Adapter: { traceId, spanId }
+        Adapter->>Adapter: buildStructuredLog + filter by level
+        Adapter->>Adapter: buffer log
+        Adapter->>Sink: OTLP HTTP POST /v1/logs (batch periódico)
     end
-    LS->>LS: buffer log
-    LS->>EXP: OTLP HTTP POST /v1/logs (batch periódico)
-    alt Falha de rede
-        EXP-->>LS: erro
-        LS->>LS: retry com backoff exponencial
+    alt Falha de rede (OTLP)
+        Sink-->>Adapter: erro
+        Adapter->>Adapter: retry com backoff exponencial
         alt Tentativas esgotadas
-            LS->>LS: discard + console.error
+            Adapter->>Adapter: discard + console.error
         end
     end
-    EXP->>GC: dados armazenados
 ```
 
 ## Fluxo de Criação de Trace (API Flat)
@@ -387,12 +397,47 @@ Timers são `unref()`'d para não impedir o encerramento do processo.
 
 ## Extensibilidade
 
-Para adicionar uma nova plataforma de observabilidade:
+### Seleção de adaptador de logger (built-in)
 
-1. Crie uma classe implementando `LoggerPort`, `TracerPort` e/ou `MetricsPort`
-2. Passe a instância no `TelemetryModule.forRoot()` ou use diretamente
+Use `loggerAdapter` na configuração ou `createLoggerAdapter()` programaticamente:
 
-Para uso com NestJS (substituindo o adapter padrão):
+```typescript
+import { TelemetryModule } from '@gsomenzi/nodejs-telemetry';
+
+TelemetryModule.forRoot({
+  serviceName: 'my-service',
+  environment: 'development',
+  loggerAdapter: 'console', // 'otlp' | 'console' | 'noop'
+  exporter: { endpoint: 'https://otlp.example.com/otlp' },
+});
+```
+
+| Valor | Classe | Comportamento |
+|-------|--------|---------------|
+| `'otlp'` (padrão) | `OtlpLogExporter` | Envia logs para endpoint OTLP |
+| `'console'` | `ConsoleLogAdapter` | JSON estruturado no stdout |
+| `'noop'` | `NoopLoggerAdapter` | Descarta logs |
+
+### Adaptador de logger customizado
+
+Para adicionar uma nova implementação de logger:
+
+1. Implemente `LoggerPort`, **ou**
+2. Componha `LoggerService` + um `LogHandler` (sink) customizado
+3. Passe via `logger` no `TelemetryModule.forRoot()` ou `TelemetryFactory.create(config, { logger })`
+
+```typescript
+TelemetryModule.forRoot({
+  serviceName: 'my-service',
+  environment: 'production',
+  logger: new MyCustomLoggerAdapter(),
+  exporter: { endpoint: 'https://otlp.example.com/otlp' },
+});
+```
+
+### Substituindo todos os ports (NestJS avançado)
+
+Para substituir logger, tracer e metrics de uma vez:
 
 ```typescript
 import { Module } from '@nestjs/common';

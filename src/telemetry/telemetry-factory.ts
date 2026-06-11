@@ -3,10 +3,13 @@ import { TracerPort } from '../ports/tracer.port';
 import { MetricsPort } from '../ports/metrics.port';
 import { TelemetryConfig } from '../types';
 import { ConfigValidator } from './config-validator';
-import { OtlpLogExporter } from '../adapters/otlp-log-exporter';
 import { OtlpTraceExporter } from '../adapters/otlp-trace-exporter';
 import { OtlpMetricsExporter } from '../adapters/otlp-metrics-exporter';
 import { registerGlobalTracer, shutdownGlobalTracer } from './global-tracer-registration';
+import {
+  createLoggerAdapter,
+  isShutdownableLogger,
+} from './logger-adapter.factory';
 
 /**
  * The result of TelemetryFactory.create() — provides access to all telemetry ports.
@@ -15,6 +18,14 @@ export interface TelemetryInstance {
   logger: LoggerPort;
   tracer: TracerPort;
   metrics: MetricsPort;
+}
+
+/**
+ * Optional overrides for TelemetryFactory.create().
+ */
+export interface TelemetryFactoryOptions {
+  /** Custom logger implementation — takes precedence over `loggerAdapter` from config. */
+  logger?: LoggerPort;
 }
 
 /**
@@ -41,6 +52,7 @@ const SHUTDOWN_TIMEOUT_MS = 5000;
  * const telemetry = TelemetryFactory.create({
  *   serviceName: 'order-worker',
  *   environment: 'production',
+ *   loggerAdapter: 'console',
  *   exporter: { endpoint: 'https://otlp.grafana.net/otlp', headers: { Authorization: '...' } },
  * });
  *
@@ -60,10 +72,11 @@ export class TelemetryFactory {
    * if the config is invalid (fail-fast behavior).
    *
    * @param config - The telemetry configuration
+   * @param options - Optional overrides (e.g. custom logger)
    * @returns A TelemetryInstance with all three ports ready to use
    * @throws InvalidConfigurationError if config is invalid
    */
-  static create(config: TelemetryConfig): TelemetryInstance {
+  static create(config: TelemetryConfig, options?: TelemetryFactoryOptions): TelemetryInstance {
     // Validate and resolve config (throws InvalidConfigurationError on bad config)
     const resolvedConfig = ConfigValidator.validate(config);
 
@@ -72,16 +85,21 @@ export class TelemetryFactory {
     // (e.g., propagation.inject() in messaging libs will produce valid traceparent headers).
     registerGlobalTracer(resolvedConfig);
 
-    // Create OTLP exporters wired with the resolved config
-    const logExporter = new OtlpLogExporter(resolvedConfig);
+    const logger = createLoggerAdapter(resolvedConfig, {
+      adapter: config.loggerAdapter,
+      logger: options?.logger,
+    });
     const traceExporter = new OtlpTraceExporter(resolvedConfig);
     const metricsExporter = new OtlpMetricsExporter(resolvedConfig);
 
-    // Store references for shutdown
-    TelemetryFactory.exporters.push(logExporter, traceExporter, metricsExporter);
+    // Store references for shutdown (only shutdownable exporters)
+    if (isShutdownableLogger(logger)) {
+      TelemetryFactory.exporters.push(logger);
+    }
+    TelemetryFactory.exporters.push(traceExporter, metricsExporter);
 
     return {
-      logger: logExporter,
+      logger,
       tracer: traceExporter,
       metrics: metricsExporter,
     };

@@ -1,6 +1,9 @@
 import { TelemetryFactory, TelemetryInstance } from '../../src/telemetry/telemetry-factory';
 import { InvalidConfigurationError } from '../../src/errors';
 import { TelemetryConfig } from '../../src/types';
+import { ConsoleLogAdapter } from '../../src/adapters/console-log-adapter';
+import { NoopLoggerAdapter } from '../../src/adapters/noop-logger-adapter';
+import { OtlpLogExporter } from '../../src/adapters/otlp-log-exporter';
 
 describe('TelemetryFactory', () => {
   const validConfig: TelemetryConfig = {
@@ -89,6 +92,42 @@ describe('TelemetryFactory', () => {
       expect(instance1).toBeDefined();
       expect(instance2).toBeDefined();
       expect(instance1).not.toBe(instance2);
+    });
+
+    it('should use ConsoleLogAdapter when loggerAdapter is "console"', () => {
+      const instance = TelemetryFactory.create({
+        ...validConfig,
+        loggerAdapter: 'console',
+      });
+
+      expect(instance.logger).toBeInstanceOf(ConsoleLogAdapter);
+    });
+
+    it('should use NoopLoggerAdapter when loggerAdapter is "noop"', () => {
+      const instance = TelemetryFactory.create({
+        ...validConfig,
+        loggerAdapter: 'noop',
+      });
+
+      expect(instance.logger).toBeInstanceOf(NoopLoggerAdapter);
+    });
+
+    it('should use OtlpLogExporter by default', () => {
+      const instance = TelemetryFactory.create(validConfig);
+      expect(instance.logger).toBeInstanceOf(OtlpLogExporter);
+    });
+
+    it('should use custom logger when provided in options', () => {
+      const customLogger = {
+        debug: jest.fn(),
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        fatal: jest.fn(),
+      };
+
+      const instance = TelemetryFactory.create(validConfig, { logger: customLogger });
+      expect(instance.logger).toBe(customLogger);
     });
   });
 

@@ -1,47 +1,39 @@
 import { LoggerPort } from '../ports/logger.port';
-import { LogLevel } from '../types';
+import { ResolvedTelemetryConfig } from '../telemetry/config-validator';
+import { LoggerService } from '../telemetry/logger-service';
+import { StdoutLogSink } from './stdout-log-sink';
 
 /**
- * ConsoleLogAdapter implements LoggerPort for development/testing.
- * Outputs structured JSON to stdout via process.stdout.write.
- * Methods never throw — errors are swallowed silently.
+ * ConsoleLogAdapter implements LoggerPort by writing structured JSON logs to stdout.
+ *
+ * Uses LoggerService for log level filtering, resource attributes, and correlation
+ * context enrichment from the active trace span.
  */
 export class ConsoleLogAdapter implements LoggerPort {
+  private readonly loggerService: LoggerService;
+
+  constructor(config: ResolvedTelemetryConfig) {
+    const sink = new StdoutLogSink();
+    this.loggerService = new LoggerService(config, (log) => sink.handle(log));
+  }
+
   debug(message: string, context?: Record<string, unknown>): void {
-    this.emit('debug', message, context);
+    this.loggerService.debug(message, context);
   }
 
   info(message: string, context?: Record<string, unknown>): void {
-    this.emit('info', message, context);
+    this.loggerService.info(message, context);
   }
 
   warn(message: string, context?: Record<string, unknown>): void {
-    this.emit('warn', message, context);
+    this.loggerService.warn(message, context);
   }
 
   error(message: string, context?: Record<string, unknown>): void {
-    this.emit('error', message, context);
+    this.loggerService.error(message, context);
   }
 
   fatal(message: string, context?: Record<string, unknown>): void {
-    this.emit('fatal', message, context);
-  }
-
-  private emit(level: LogLevel, message: string, context?: Record<string, unknown>): void {
-    try {
-      const entry: Record<string, unknown> = {
-        timestamp: new Date().toISOString(),
-        level,
-        message,
-      };
-
-      if (context !== undefined) {
-        entry.context = context;
-      }
-
-      process.stdout.write(JSON.stringify(entry) + '\n');
-    } catch {
-      // Never throw — swallow errors silently
-    }
+    this.loggerService.fatal(message, context);
   }
 }

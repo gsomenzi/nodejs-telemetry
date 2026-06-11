@@ -19,6 +19,7 @@ Uma biblioteca de observabilidade que cobre os três pilares — logs estruturad
 - **Retry + Discard** — Backoff exponencial para erros transitórios, discard com log para permanentes
 - **Fail-safe** — Telemetria nunca crasha a aplicação; erros são capturados internamente
 - **NestJS ready** — Módulo global com `forRoot`/`forRootAsync` e interceptor automático
+- **Logger adapters** — Escolha entre OTLP, stdout ou noop na configuração; ou injete um adaptador customizado
 - **Standalone** — `TelemetryFactory` para uso em scripts, workers e lambdas
 - **Consistente** — Segue os mesmos padrões hexagonais do `gsomenzi-eventbus`
 
@@ -69,6 +70,31 @@ import { TelemetryModule } from '@gsomenzi/nodejs-telemetry';
 export class AppModule {}
 ```
 
+### Logs no stdout (desenvolvimento)
+
+```typescript
+TelemetryModule.forRoot({
+  serviceName: 'order-service',
+  environment: 'development',
+  loggerAdapter: 'console', // 'otlp' | 'console' | 'noop'
+  exporter: {
+    endpoint: 'https://otlp.grafana.net/otlp', // ainda usado por traces e metrics
+    headers: { Authorization: 'Basic <token>' },
+  },
+});
+```
+
+### Adaptador de logger customizado
+
+```typescript
+TelemetryModule.forRoot({
+  serviceName: 'order-service',
+  environment: 'production',
+  logger: new MyPinoLoggerAdapter(), // tem precedência sobre loggerAdapter
+  exporter: { endpoint: 'https://otlp.grafana.net/otlp' },
+});
+```
+
 ### Com configuração assíncrona (via ConfigService)
 
 ```typescript
@@ -85,6 +111,7 @@ import { TelemetryModule } from '@gsomenzi/nodejs-telemetry';
         serviceVersion: config.get('SERVICE_VERSION'),
         environment: config.getOrThrow('NODE_ENV'),
         logLevel: config.get('LOG_LEVEL', 'info'),
+        loggerAdapter: config.get('NODE_ENV') === 'development' ? 'console' : 'otlp',
         exporter: {
           endpoint: config.getOrThrow('OTLP_ENDPOINT'),
           headers: { Authorization: config.getOrThrow('OTLP_AUTH_HEADER') },
@@ -201,6 +228,7 @@ import { TelemetryFactory } from '@gsomenzi/nodejs-telemetry';
 const telemetry = TelemetryFactory.create({
   serviceName: 'order-worker',
   environment: 'production',
+  loggerAdapter: 'console',
   exporter: {
     endpoint: 'https://otlp.grafana.net/otlp',
     headers: { Authorization: 'Basic <token>' },
@@ -263,6 +291,7 @@ interface TelemetryConfig {
   serviceVersion?: string;      // Default: "unknown"
   environment: string;          // Obrigatório — ex: "production", "staging"
   logLevel?: LogLevel;          // Default: "info" (debug | info | warn | error | fatal)
+  loggerAdapter?: LoggerAdapterType; // Default: "otlp" ('otlp' | 'console' | 'noop')
   exporter: {
     endpoint: string;           // Obrigatório — URL do endpoint OTLP
     headers?: Record<string, string>; // Headers de autenticação
@@ -279,12 +308,22 @@ interface TelemetryConfig {
 
 ## Adapters disponíveis
 
+### Logger adapters
+
+| Adapter | `loggerAdapter` | Uso |
+|---------|-----------------|-----|
+| `OtlpLogExporter` | `'otlp'` (padrão) | Envia logs via OTLP HTTP para qualquer backend compatível |
+| `ConsoleLogAdapter` | `'console'` | Saída JSON estruturada em stdout (dev/testes) |
+| `NoopLoggerAdapter` | `'noop'` | Descarta logs; traces e metrics continuam ativos |
+
+Use `createLoggerAdapter()` para instanciar programaticamente, ou passe `logger: LoggerPort` no NestJS/`TelemetryFactory` para um adaptador customizado.
+
+### Outros adapters
+
 | Adapter | Uso |
 |---------|-----|
-| `OtlpLogExporter` | Envia logs via OTLP HTTP para qualquer backend compatível |
 | `OtlpTraceExporter` | Envia traces via OTLP HTTP com batching e retry |
 | `OtlpMetricsExporter` | Envia métricas via OTLP HTTP com flush periódico |
-| `ConsoleLogAdapter` | Saída JSON estruturada em stdout (dev/testes) |
 | `NoopAdapter` | No-op para todos os ports (desabilitar telemetria) |
 
 ## Estrutura
@@ -299,6 +338,8 @@ src/
 │   ├── otlp-trace-exporter.ts
 │   ├── otlp-metrics-exporter.ts
 │   ├── console-log-adapter.ts
+│   ├── noop-logger-adapter.ts
+│   ├── stdout-log-sink.ts
 │   ├── noop-adapter.ts
 │   ├── context-propagator.ts
 │   └── retry-policy.ts
@@ -307,6 +348,7 @@ src/
 │   ├── context-manager.ts
 │   ├── global-tracer-registration.ts  ← Registro global OTel SDK
 │   ├── logger-service.ts
+│   ├── logger-adapter.factory.ts
 │   ├── tracer-service.ts
 │   ├── metrics-service.ts
 │   ├── span.ts
@@ -327,14 +369,15 @@ import {
   MetricsPort, METRICS_PORT,
 
   // Factory (standalone)
-  TelemetryFactory,
+  TelemetryFactory, createLoggerAdapter,
 
   // NestJS
   TelemetryModule, TelemetryInterceptor,
 
   // Adapters
   OtlpLogExporter, OtlpTraceExporter, OtlpMetricsExporter,
-  ConsoleLogAdapter, NoopAdapter, ContextPropagator, TelemetryContextHandler,
+  ConsoleLogAdapter, NoopLoggerAdapter, NoopAdapter, StdoutLogSink,
+  ContextPropagator, TelemetryContextHandler,
 
   // Global TracerProvider (OpenTelemetry API interop)
   registerGlobalTracer, shutdownGlobalTracer, isGlobalTracerRegistered,

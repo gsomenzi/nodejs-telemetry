@@ -1,13 +1,13 @@
 import { Module, Global, DynamicModule, Provider } from '@nestjs/common';
-import { LOGGER_PORT } from '../ports/logger.port';
+import { LOGGER_PORT, LoggerPort } from '../ports/logger.port';
 import { TRACER_PORT } from '../ports/tracer.port';
 import { METRICS_PORT } from '../ports/metrics.port';
 import { ConfigValidator, ResolvedTelemetryConfig } from '../telemetry/config-validator';
-import { OtlpLogExporter } from '../adapters/otlp-log-exporter';
 import { OtlpTraceExporter } from '../adapters/otlp-trace-exporter';
 import { OtlpMetricsExporter } from '../adapters/otlp-metrics-exporter';
 import { registerGlobalTracer } from '../telemetry/global-tracer-registration';
-import { LogLevel, ExporterConfig } from '../types';
+import { createLoggerAdapter } from '../telemetry/logger-adapter.factory';
+import { LogLevel, ExporterConfig, LoggerAdapterType } from '../types';
 
 /**
  * Configuration options for TelemetryModule.forRoot().
@@ -18,6 +18,10 @@ export interface TelemetryModuleOptions {
   serviceVersion?: string;
   environment: string;
   logLevel?: LogLevel;
+  /** Built-in logger adapter. Defaults to 'otlp'. */
+  loggerAdapter?: LoggerAdapterType;
+  /** Custom logger implementation — takes precedence over `loggerAdapter`. */
+  logger?: LoggerPort;
   exporter: ExporterConfig;
 }
 
@@ -36,6 +40,13 @@ export interface TelemetryModuleAsyncOptions {
  */
 const TELEMETRY_MODULE_OPTIONS = 'TELEMETRY_MODULE_OPTIONS';
 
+function createLoggerProvider(resolvedConfig: ResolvedTelemetryConfig, options: TelemetryModuleOptions) {
+  return createLoggerAdapter(resolvedConfig, {
+    adapter: options.loggerAdapter,
+    logger: options.logger,
+  });
+}
+
 /**
  * TelemetryModule provides NestJS integration for the telemetry library.
  *
@@ -48,6 +59,7 @@ const TELEMETRY_MODULE_OPTIONS = 'TELEMETRY_MODULE_OPTIONS';
  * TelemetryModule.forRoot({
  *   serviceName: 'my-service',
  *   environment: 'production',
+ *   loggerAdapter: 'console', // 'otlp' | 'console' | 'noop'
  *   exporter: { endpoint: 'https://otlp.grafana.net/otlp', headers: { Authorization: '...' } },
  * });
  *
@@ -81,7 +93,7 @@ export class TelemetryModule {
     const providers: Provider[] = [
       {
         provide: LOGGER_PORT,
-        useValue: new OtlpLogExporter(resolvedConfig),
+        useValue: createLoggerProvider(resolvedConfig, options),
       },
       {
         provide: TRACER_PORT,
@@ -115,7 +127,7 @@ export class TelemetryModule {
       provide: LOGGER_PORT,
       useFactory: (moduleOptions: TelemetryModuleOptions) => {
         const resolvedConfig = ConfigValidator.validate(moduleOptions);
-        return new OtlpLogExporter(resolvedConfig);
+        return createLoggerProvider(resolvedConfig, moduleOptions);
       },
       inject: [TELEMETRY_MODULE_OPTIONS],
     };

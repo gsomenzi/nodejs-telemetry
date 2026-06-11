@@ -12,9 +12,24 @@ interface TelemetryConfig {
   serviceVersion?: string;      // Default: "unknown"
   environment: string;          // Obrigatório — ex: "production", "staging"
   logLevel?: LogLevel;          // Default: "info"
+  loggerAdapter?: LoggerAdapterType; // Default: "otlp"
   exporter: ExporterConfig;
 }
 ```
+
+### `LoggerAdapterType`
+
+Adaptadores built-in para logs.
+
+```typescript
+type LoggerAdapterType = 'otlp' | 'console' | 'noop';
+```
+
+| Valor | Implementação | Descrição |
+|-------|---------------|-----------|
+| `'otlp'` | `OtlpLogExporter` | Envia logs via OTLP HTTP (padrão) |
+| `'console'` | `ConsoleLogAdapter` | Escreve JSON estruturado no stdout |
+| `'noop'` | `NoopLoggerAdapter` | Descarta logs |
 
 ### `ExporterConfig`
 
@@ -171,6 +186,35 @@ interface TelemetryInstance {
 }
 ```
 
+### `TelemetryFactoryOptions`
+
+Overrides opcionais para `TelemetryFactory.create()`.
+
+```typescript
+interface TelemetryFactoryOptions {
+  logger?: LoggerPort;  // Tem precedência sobre loggerAdapter da config
+}
+```
+
+### `CreateLoggerAdapterOptions`
+
+Opções para `createLoggerAdapter()`.
+
+```typescript
+interface CreateLoggerAdapterOptions {
+  adapter?: LoggerAdapterType;  // Default: 'otlp'
+  logger?: LoggerPort;          // Tem precedência sobre adapter
+}
+```
+
+### `LogHandler`
+
+Callback para exportação de logs estruturados. Usado por `LoggerService`.
+
+```typescript
+type LogHandler = (log: StructuredLog) => void;
+```
+
 ---
 
 ## Ports (Interfaces)
@@ -316,17 +360,18 @@ Factory para uso standalone (sem NestJS). Cria instâncias configuradas de todos
 
 ```typescript
 class TelemetryFactory {
-  static create(config: TelemetryConfig): TelemetryInstance;
+  static create(config: TelemetryConfig, options?: TelemetryFactoryOptions): TelemetryInstance;
   static shutdown(): Promise<void>;
 }
 ```
 
-#### `create(config)`
+#### `create(config, options?)`
 
 1. Valida config via `ConfigValidator` — lança `InvalidConfigurationError` se inválida
 2. Registra `NodeTracerProvider` e `W3CTraceContextPropagator` globalmente via `@opentelemetry/api` (idempotente)
-3. Cria `OtlpLogExporter`, `OtlpTraceExporter`, `OtlpMetricsExporter` com a config resolvida
-4. Retorna `TelemetryInstance` com os três ports prontos para uso
+3. Cria logger via `createLoggerAdapter()` (respeita `config.loggerAdapter` e `options.logger`)
+4. Cria `OtlpTraceExporter` e `OtlpMetricsExporter` com a config resolvida
+5. Retorna `TelemetryInstance` com os três ports prontos para uso
 
 #### `shutdown()`
 
@@ -369,6 +414,49 @@ class ConfigValidator {
 | `exporter.endpoint` | String não-vazia (trim) |
 
 Lança `InvalidConfigurationError` com `field` e `reason` quando inválido.
+
+---
+
+### `createLoggerAdapter()`
+
+Factory para criar implementações de `LoggerPort`.
+
+```typescript
+function createLoggerAdapter(
+  config: ResolvedTelemetryConfig,
+  options?: LoggerAdapterType | CreateLoggerAdapterOptions,
+): LoggerPort;
+
+function isShutdownableLogger(
+  logger: LoggerPort,
+): logger is LoggerPort & { shutdown(): Promise<void> };
+```
+
+| `options` | Resultado |
+|-----------|-----------|
+| omitido ou `'otlp'` | `OtlpLogExporter` |
+| `'console'` | `ConsoleLogAdapter` |
+| `'noop'` | `NoopLoggerAdapter` |
+| `{ logger: custom }` | Instância customizada (ignora `adapter`) |
+
+---
+
+### `LoggerService`
+
+Core service que implementa `LoggerPort`. Usado internamente por `ConsoleLogAdapter` e disponível para composição customizada.
+
+```typescript
+class LoggerService implements LoggerPort {
+  constructor(config: ResolvedTelemetryConfig, logHandler?: LogHandler);
+  getLogBuffer(): StructuredLog[];
+  clearLogBuffer(): void;
+}
+```
+
+**Comportamento:**
+- Filtra logs abaixo do nível mínimo configurado
+- Enriquece com resource attributes e correlação do span ativo
+- Delega para `LogHandler` quando fornecido; caso contrário, bufferiza internamente (útil em testes)
 
 ---
 
@@ -452,17 +540,45 @@ new OtlpMetricsExporter(config: ResolvedTelemetryConfig)
 
 ### `ConsoleLogAdapter`
 
-Implementa `LoggerPort`. Saída JSON estruturada em stdout para desenvolvimento/testes.
+Implementa `LoggerPort`. Escreve logs estruturados em JSON no stdout via `LoggerService` + `StdoutLogSink`.
 
 ```typescript
-new ConsoleLogAdapter()
+new ConsoleLogAdapter(config: ResolvedTelemetryConfig)
 ```
 
-Cada chamada emite uma linha JSON em `process.stdout` com:
+Cada linha JSON inclui:
 - `timestamp` (ISO 8601)
 - `level`
 - `message`
+- `resource` (service.name, service.version, deployment.environment)
 - `context` (quando fornecido)
+- `correlation` (traceId/spanId quando há span ativo)
+
+Respeita filtro por `logLevel` configurado.
+
+---
+
+### `NoopLoggerAdapter`
+
+Implementa `LoggerPort`. Todos os métodos de log são no-ops.
+
+```typescript
+new NoopLoggerAdapter()
+```
+
+Útil para desabilitar apenas logs mantendo traces e metrics ativos. Selecionável via `loggerAdapter: 'noop'`.
+
+---
+
+### `StdoutLogSink`
+
+Sink que escreve `StructuredLog` como JSON line no stdout. Usado internamente por `ConsoleLogAdapter`.
+
+```typescript
+class StdoutLogSink {
+  handle(log: StructuredLog): void;
+}
+```
 
 ---
 
@@ -555,9 +671,16 @@ interface TelemetryModuleOptions {
   serviceVersion?: string;
   environment: string;
   logLevel?: LogLevel;
+  loggerAdapter?: LoggerAdapterType;
+  logger?: LoggerPort;
   exporter: ExporterConfig;
 }
 ```
+
+| Campo | Descrição |
+|-------|-----------|
+| `loggerAdapter` | Adaptador built-in. Default: `'otlp'` |
+| `logger` | Adaptador customizado. Tem precedência sobre `loggerAdapter` |
 
 #### `TelemetryModuleAsyncOptions`
 
@@ -570,8 +693,8 @@ interface TelemetryModuleAsyncOptions {
 ```
 
 **Comportamento:**
-- `forRoot` valida config, registra global TracerProvider/Propagator, cria exporters OTLP, registra como providers globais
-- `forRootAsync` resolve config via factory antes de criar exporters e registrar global TracerProvider
+- `forRoot` valida config, registra global TracerProvider/Propagator, cria logger via `createLoggerAdapter()`, cria exporters OTLP para trace/metrics, registra como providers globais
+- `forRootAsync` resolve config via factory antes de criar adapters e registrar global TracerProvider
 - Registra `LOGGER_PORT`, `TRACER_PORT`, `METRICS_PORT` como tokens de injeção
 - Módulo `@Global()` — ports disponíveis em todos os módulos sem re-importação
 

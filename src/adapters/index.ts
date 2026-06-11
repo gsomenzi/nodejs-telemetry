@@ -4,6 +4,8 @@ export { calculateDelay, shouldRetry, isRetryableError, executeWithRetry } from 
 // Adapters
 export { ConsoleLogAdapter } from './console-log-adapter';
 export { NoopAdapter } from './noop-adapter';
+export { NoopLoggerAdapter } from './noop-logger-adapter';
+export { StdoutLogSink } from './stdout-log-sink';
 export { ContextPropagator } from './context-propagator';
 export { OtlpLogExporter } from './otlp-log-exporter';
 export { OtlpTraceExporter } from './otlp-trace-exporter';

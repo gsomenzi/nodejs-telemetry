@@ -6,7 +6,10 @@ import { METRICS_PORT } from '../../src/ports/metrics.port';
 import { OtlpLogExporter } from '../../src/adapters/otlp-log-exporter';
 import { OtlpTraceExporter } from '../../src/adapters/otlp-trace-exporter';
 import { OtlpMetricsExporter } from '../../src/adapters/otlp-metrics-exporter';
+import { ConsoleLogAdapter } from '../../src/adapters/console-log-adapter';
+import { NoopLoggerAdapter } from '../../src/adapters/noop-logger-adapter';
 import { InvalidConfigurationError } from '../../src/errors';
+import { LoggerPort } from '../../src/ports/logger.port';
 
 const validOptions: TelemetryModuleOptions = {
   serviceName: 'test-service',
@@ -90,6 +93,56 @@ describe('TelemetryModule', () => {
 
       const logger = module.get(LOGGER_PORT);
       expect(logger).toBeDefined();
+    });
+
+    it('should use ConsoleLogAdapter when loggerAdapter is "console"', async () => {
+      module = await Test.createTestingModule({
+        imports: [
+          TelemetryModule.forRoot({
+            ...validOptions,
+            loggerAdapter: 'console',
+          }),
+        ],
+      }).compile();
+
+      const logger = module.get(LOGGER_PORT);
+      expect(logger).toBeInstanceOf(ConsoleLogAdapter);
+    });
+
+    it('should use NoopLoggerAdapter when loggerAdapter is "noop"', async () => {
+      module = await Test.createTestingModule({
+        imports: [
+          TelemetryModule.forRoot({
+            ...validOptions,
+            loggerAdapter: 'noop',
+          }),
+        ],
+      }).compile();
+
+      const logger = module.get(LOGGER_PORT);
+      expect(logger).toBeInstanceOf(NoopLoggerAdapter);
+    });
+
+    it('should use custom logger when provided', async () => {
+      const customLogger: LoggerPort = {
+        debug: jest.fn(),
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        fatal: jest.fn(),
+      };
+
+      module = await Test.createTestingModule({
+        imports: [
+          TelemetryModule.forRoot({
+            ...validOptions,
+            logger: customLogger,
+          }),
+        ],
+      }).compile();
+
+      const logger = module.get(LOGGER_PORT);
+      expect(logger).toBe(customLogger);
     });
 
     it('should apply default serviceVersion "unknown" when not provided', async () => {

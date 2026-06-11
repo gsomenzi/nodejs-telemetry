@@ -24,11 +24,58 @@ export class AppModule {}
 ```
 
 Isso registra automaticamente:
-- `OtlpLogExporter` como `LOGGER_PORT`
+- Logger conforme `loggerAdapter` (padrão: `OtlpLogExporter` como `LOGGER_PORT`)
 - `OtlpTraceExporter` como `TRACER_PORT`
 - `OtlpMetricsExporter` como `METRICS_PORT`
 - Todos como providers globais (disponíveis em qualquer módulo)
 - Registra `NodeTracerProvider` e `W3CTraceContextPropagator` globalmente via `@opentelemetry/api`
+
+### Logs no stdout (desenvolvimento)
+
+```typescript
+TelemetryModule.forRoot({
+  serviceName: 'order-service',
+  environment: 'development',
+  loggerAdapter: 'console',
+  exporter: { endpoint: 'https://otlp.grafana.net/otlp' },
+});
+```
+
+O `ConsoleLogAdapter` usa `LoggerService` internamente, então logs no stdout incluem filtro por nível, resource attributes e correlação com trace/span ativo.
+
+### Adaptador de logger customizado
+
+```typescript
+import { LoggerPort } from '@gsomenzi/nodejs-telemetry';
+
+class MyPinoLoggerAdapter implements LoggerPort {
+  debug(message: string, context?: Record<string, unknown>): void { /* ... */ }
+  info(message: string, context?: Record<string, unknown>): void { /* ... */ }
+  warn(message: string, context?: Record<string, unknown>): void { /* ... */ }
+  error(message: string, context?: Record<string, unknown>): void { /* ... */ }
+  fatal(message: string, context?: Record<string, unknown>): void { /* ... */ }
+}
+
+TelemetryModule.forRoot({
+  serviceName: 'order-service',
+  environment: 'production',
+  logger: new MyPinoLoggerAdapter(), // tem precedência sobre loggerAdapter
+  exporter: { endpoint: 'https://otlp.grafana.net/otlp' },
+});
+```
+
+Para compor com a lógica core (filtro de nível, correlação, resource), use `LoggerService` + um sink customizado:
+
+```typescript
+import { LoggerService, LogHandler, ConfigValidator } from '@gsomenzi/nodejs-telemetry';
+
+const config = ConfigValidator.validate({ /* ... */ });
+const sink: LogHandler = (log) => {
+  // log já vem estruturado com resource, correlation, etc.
+};
+
+const logger = new LoggerService(config, sink);
+```
 
 ### Configuração assíncrona (via ConfigService)
 
@@ -74,6 +121,8 @@ export class AppModule {}
 | `serviceVersion` | `string` | | `"unknown"` | Versão do serviço |
 | `environment` | `string` | ✓ | — | Ambiente de execução (production, staging, etc.) |
 | `logLevel` | `LogLevel` | | `"info"` | Nível mínimo de log (debug, info, warn, error, fatal) |
+| `loggerAdapter` | `'otlp' \| 'console' \| 'noop'` | | `"otlp"` | Adaptador built-in para logs |
+| `logger` | `LoggerPort` | | — | Adaptador customizado (NestJS only; tem precedência sobre `loggerAdapter`) |
 | `exporter.endpoint` | `string` | ✓ | — | URL do endpoint OTLP |
 | `exporter.headers` | `Record<string, string>` | | — | Headers de autenticação |
 | `exporter.protocol` | `'http' \| 'grpc'` | | `"http"` | Protocolo de transporte |
@@ -593,6 +642,7 @@ const telemetry = TelemetryFactory.create({
   serviceVersion: '1.2.0',
   environment: 'production',
   logLevel: 'info',
+  loggerAdapter: 'console',
   exporter: {
     endpoint: 'https://otlp.grafana.net/otlp',
     headers: { Authorization: 'Basic <token>' },
@@ -683,7 +733,18 @@ export async function handler(event: APIGatewayEvent) {
 
 ## Desabilitando Telemetria
 
-### Com NoopAdapter
+### Apenas logs (traces e metrics ativos)
+
+```typescript
+TelemetryModule.forRoot({
+  serviceName: 'order-service',
+  environment: 'testing',
+  loggerAdapter: 'noop',
+  exporter: { endpoint: 'https://otlp.grafana.net/otlp' },
+});
+```
+
+### Com NoopAdapter (todos os pilares)
 
 Para desabilitar telemetria completamente (ex: testes unitários):
 
@@ -870,6 +931,7 @@ SERVICE_NAME=order-service
 SERVICE_VERSION=1.2.0
 NODE_ENV=production
 LOG_LEVEL=info
+LOGGER_ADAPTER=console
 
 # OTLP
 OTLP_ENDPOINT=https://otlp-gateway-prod-sa-east-1.grafana.net/otlp
